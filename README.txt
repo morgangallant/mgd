@@ -2,7 +2,7 @@
 
 Some fundamental principles behind the design:
 - No dependency on external services.
-- No leader, or pre-defined "leader" server.
+- No pre-defined "leader" server.
 - Each server running `mgd` operates autonomously.
 - Servers can be added or removed at any time.
 - Machines contribute whatever resources they can to the network.

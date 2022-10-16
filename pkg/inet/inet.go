@@ -4,6 +4,8 @@ package inet
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"net/http"
 	"net/netip"
 	"os"
@@ -68,6 +70,17 @@ func HTTPClient() *http.Client {
 		return http.DefaultClient
 	}
 	return serverClient
+}
+
+// PortListener returns a net.Listener which can be used to listen
+// for incoming connections on the internal network. If the server
+// isn't connected, then we return a standard net.Listener.
+func PortListener(port uint) (net.Listener, error) {
+	addr := fmt.Sprintf(":%d", port)
+	if _, ok := os.LookupEnv("TSKEY"); !ok {
+		return net.Listen("tcp", addr)
+	}
+	return server.Listen("tcp", addr)
 }
 
 // Shutdown shuts down the connection to the internal network.

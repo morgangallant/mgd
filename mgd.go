@@ -87,42 +87,49 @@ func newInetConn(ctx context.Context, hostname string) (*inetConn, error) {
 	ic.mu.Lock()
 	defer ic.mu.Unlock()
 
-	inner := &tsnet.Server{
-		Hostname:  hostname,
-		Dir:       dir,
-		AuthKey:   authKey,
-		Ephemeral: true,
-		Logf:      func(format string, args ...any) {},
-		NotifyFunc: func(n *ipn.Notify) (keepGoing bool) {
-			if n.NetMap != nil {
-				ic.mu.Lock()
-				existing := ic.peers
-				ic.peers = make(map[string]*tailcfg.Node, len(n.NetMap.Peers))
-				for _, p := range n.NetMap.Peers {
-					if p.Online == nil || !*p.Online {
-						continue
-					}
-					cloned := p.Clone()
-					slices.Sort(cloned.Tags)
-					if !slices.Equal(cloned.Tags, ic.selfTags) {
-						continue
-					}
-					ic.peers[cloned.ID.String()] = cloned
-					if _, ok := existing[cloned.ID.String()]; ok {
-						delete(existing, cloned.ID.String())
-					} else if ic.peerAddedCb != nil {
-						ic.peerAddedCb(cloned)
-					}
-				}
-				if ic.peerRemovedCb != nil {
-					for _, peer := range existing {
-						ic.peerRemovedCb(peer)
-					}
-				}
-				ic.mu.Unlock()
-			}
+	nf := func(n *ipn.Notify) (keepGoing bool) {
+		if n.NetMap == nil {
 			return true
-		},
+		}
+
+		ic.mu.Lock()
+		defer ic.mu.Unlock()
+
+		existing := ic.peers
+		ic.peers = make(map[string]*tailcfg.Node, len(n.NetMap.Peers))
+		for _, p := range n.NetMap.Peers {
+			if p.Online == nil || !*p.Online {
+				continue
+			}
+			cloned := p.Clone()
+			slices.Sort(cloned.Tags)
+			if !slices.Equal(cloned.Tags, ic.selfTags) {
+				continue
+			}
+			ic.peers[cloned.ID.String()] = cloned
+			if _, ok := existing[cloned.ID.String()]; ok {
+				delete(existing, cloned.ID.String())
+			} else if ic.peerAddedCb != nil {
+				ic.peerAddedCb(cloned)
+			}
+		}
+
+		if ic.peerRemovedCb != nil {
+			for _, p := range existing {
+				ic.peerRemovedCb(p)
+			}
+		}
+
+		return true
+	}
+
+	inner := &tsnet.Server{
+		Hostname:   hostname,
+		Dir:        dir,
+		AuthKey:    authKey,
+		Ephemeral:  true,
+		Logf:       func(format string, args ...any) {},
+		NotifyFunc: nf,
 	}
 
 	client, err := inner.LocalClient()

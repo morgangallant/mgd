@@ -4,6 +4,7 @@ go 1.19
 
 require (
 	github.com/cockroachdb/pebble v0.0.0-20230113195140-25d2b70d1aeb
+	github.com/hashicorp/go-hclog v0.9.1
 	github.com/hashicorp/raft v1.3.11
 	github.com/joho/godotenv v1.4.0
 	github.com/pkg/errors v0.9.1
@@ -49,7 +50,6 @@ require (
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/btree v1.0.1 // indirect
 	github.com/google/go-cmp v0.5.8 // indirect
-	github.com/hashicorp/go-hclog v0.9.1 // indirect
 	github.com/hashicorp/go-immutable-radix v1.0.0 // indirect
 	github.com/hashicorp/go-msgpack v0.5.5 // indirect
 	github.com/hashicorp/golang-lru v0.5.1 // indirect

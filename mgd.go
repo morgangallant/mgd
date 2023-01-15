@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/raft"
 	"github.com/joho/godotenv"
 	"github.com/pkg/errors"
@@ -54,7 +55,6 @@ func run(ctx context.Context) error {
 		return errors.WithStack(err)
 	}
 	defer os.RemoveAll(datadir)
-	log.Printf("using datadir %s", datadir)
 
 	conn, err := newInetConn(ctx, "mgd", filepath.Join(datadir, "ts"))
 	if err != nil {
@@ -211,18 +211,6 @@ func (c *inetConn) dialContext(ctx context.Context, network, address string) (ne
 	return c.inner.Dial(ctx, network, address)
 }
 
-func (c *inetConn) getPeer(id tailcfg.StableNodeID, clone bool) *tailcfg.Node {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if peer, ok := c.peers[id]; ok {
-		if clone {
-			return peer.Clone()
-		}
-		return peer
-	}
-	return nil
-}
-
 type clusterFsm struct{}
 
 var _ raft.FSM = (*clusterFsm)(nil)
@@ -258,7 +246,13 @@ func (cs *clusterStore) Set(key, val []byte) error {
 }
 
 func (cs *clusterStore) Get(key []byte) ([]byte, error) {
-	return cs.inner.get(context.Background(), key)
+	val, err := cs.inner.get(context.Background(), key)
+	if errors.Is(err, errNotFound) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	return val, nil
 }
 
 func (cs *clusterStore) SetUint64(key []byte, val uint64) error {
@@ -371,6 +365,7 @@ func newClusterManager(
 	datadir string,
 ) (*clusterManager, error) {
 	manager := &clusterManager{
+		selfId:   conn.selfId,
 		fsm:      &clusterFsm{},
 		errGroup: new(errgroup.Group),
 	}
@@ -403,17 +398,16 @@ func newClusterManager(
 	})
 
 	transport := raft.NewNetworkTransportWithConfig(&raft.NetworkTransportConfig{
-		ServerAddressProvider: &inetAddressProvider{conn},
-		Stream:                streamLayer,
-		MaxPool:               3,
-		Timeout:               10 * time.Second,
+		Stream:  streamLayer,
+		MaxPool: 3,
+		Timeout: 10 * time.Second,
 	})
 	manager.shutdownFuncs = append(manager.shutdownFuncs, func(ctx context.Context) error {
 		return transport.Close()
 	})
 
 	conf := raft.DefaultConfig()
-	conf.LogLevel = "warn"
+	conf.Logger = hclog.NewNullLogger()
 	conf.LocalID = raft.ServerID(conn.selfId)
 
 	manager.inner, err = raft.NewRaft(conf, manager.fsm, store, store, snapshots, transport)
@@ -436,26 +430,20 @@ func newClusterManager(
 		return nil
 	})
 
-	servers := make([]raft.Server, 0, len(conn.peers)+1)
-	servers = append(servers, raft.Server{
-		ID:      raft.ServerID(conn.selfId),
-		Address: raft.ServerAddress(serverAddr),
-	})
-	for _, peer := range conn.peers {
-		if len(peer.Addresses) == 0 {
-			continue
+	// We bootstrap the cluster if we're the only peer.
+	if len(conn.peers) == 0 {
+		if err := manager.inner.BootstrapCluster(raft.Configuration{
+			Servers: []raft.Server{
+				{
+					ID:      raft.ServerID(conn.selfId),
+					Address: raft.ServerAddress(serverAddr),
+				},
+			},
+		}).Error(); err != nil {
+			return nil, errors.WithStack(err)
 		}
-		servers = append(servers, raft.Server{
-			ID: raft.ServerID(peer.StableID),
-			Address: raft.ServerAddress(
-				net.JoinHostPort(peer.Addresses[0].Addr().String(), clusterPort),
-			),
-		})
+		log.Printf("bootstrapped cluster")
 	}
-
-	manager.inner.BootstrapCluster(raft.Configuration{
-		Servers: servers,
-	})
 
 	return manager, nil
 }
@@ -485,29 +473,14 @@ func (isl *inetStreamLayer) Dial(
 	return isl.inner.dialContext(ctx, "tcp", string(address))
 }
 
-type inetAddressProvider struct {
-	inner *inetConn
-}
-
-func (iap *inetAddressProvider) ServerAddr(id raft.ServerID) (raft.ServerAddress, error) {
-	if id == raft.ServerID(iap.inner.selfId) {
-		return raft.ServerAddress(net.JoinHostPort(iap.inner.selfIps[0].String(), clusterPort)), nil
-	}
-	peer := iap.inner.getPeer(tailcfg.StableNodeID(id), false)
-	if peer == nil {
-		return "", errors.New("peer not found")
-	} else if len(peer.Addresses) == 0 {
-		return "", errors.New("peer has no addresses")
-	}
-	return raft.ServerAddress(net.JoinHostPort(peer.Addresses[0].Addr().String(), clusterPort)), nil
-}
-
 var _ raft.StreamLayer = (*inetStreamLayer)(nil)
 
 func (cm *clusterManager) close(ctx context.Context) error {
 	if cm.inner.State() == raft.Leader {
-		if err := cm.inner.RemoveServer(raft.ServerID(cm.selfId), 0, time.Second*5).Error(); err != nil {
-			return err
+		if err := cm.inner.RemoveServer(raft.ServerID(cm.selfId), 0, 0).Error(); err != nil {
+			log.Printf("failed to resign from leadership position: %v", err)
+		} else {
+			log.Println("resigned from leader of cluster")
 		}
 	}
 	for i := len(cm.shutdownFuncs) - 1; i >= 0; i-- {
@@ -515,14 +488,13 @@ func (cm *clusterManager) close(ctx context.Context) error {
 			return err
 		}
 	}
-	return nil
+	return cm.errGroup.Wait()
 }
 
 func (cm *clusterManager) peerAdded(peer *tailcfg.Node) {
 	log.Printf("discovered peer %s (%v)", peer.StableID, peer.Addresses)
 	if len(peer.Addresses) > 0 && cm.inner.State() == raft.Leader {
 		endpoint := net.JoinHostPort(peer.Addresses[0].Addr().String(), clusterPort)
-		log.Printf("adding voter %s (%s)", peer.StableID, endpoint)
 		if err := cm.inner.AddVoter(raft.ServerID(peer.StableID), raft.ServerAddress(endpoint), 0, 0).Error(); err != nil {
 			log.Printf("failed to add voter %s to cluster: %v", peer.StableID, err)
 		}
@@ -543,7 +515,6 @@ func (cm *clusterManager) startObservationProcessor() chan raft.Observation {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cm.errGroup.Go(func() error {
-		defer cancel()
 		for {
 			select {
 			case <-ctx.Done():
@@ -567,11 +538,13 @@ func (cm *clusterManager) processObservation(o raft.Observation) {
 	if !ok {
 		return
 	}
-	log.Printf(
-		"observed leader as %s (%s)",
-		leaderObservation.LeaderID,
-		leaderObservation.LeaderAddr,
-	)
+	if string(cm.selfId) == string(leaderObservation.LeaderID) {
+		log.Printf("elected as leader of cluster (%s)", cm.selfId)
+	} else if leaderObservation.LeaderID != "" {
+		log.Printf("observed leader as %s", leaderObservation.LeaderID)
+	} else {
+		log.Println("cluster has no leader")
+	}
 }
 
 type iterator interface {
@@ -618,10 +591,9 @@ func (s *pebbleStore) close() error {
 
 func (s *pebbleStore) get(_ context.Context, key []byte) ([]byte, error) {
 	value, closer, err := s.db.Get(key)
-	if err != nil {
-		if errors.Is(err, pebble.ErrNotFound) {
-			return nil, errNotFound
-		}
+	if errors.Is(err, pebble.ErrNotFound) {
+		return nil, errNotFound
+	} else if err != nil {
 		return nil, errors.WithStack(err)
 	}
 	defer closer.Close()

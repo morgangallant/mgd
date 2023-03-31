@@ -49,6 +49,7 @@ func main() {
 	}
 }
 
+// This is the main run function which executes the program.
 func run(ctx context.Context) error {
 	datadir := filepath.Join(os.TempDir(), strconv.FormatInt(time.Now().UnixNano(), 10))
 	if err := os.MkdirAll(datadir, 0755); err != nil {

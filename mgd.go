@@ -39,6 +39,7 @@ func init() { // Hopefully this works!
 	// Another line here!
 	
 	// This logging flag is super important, otherwise our logs look bad.
+	// This causes problems.
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 }
 

@@ -32,6 +32,9 @@ import (
 func init() { // Hopefully this works!
 	rand.Seed(time.Now().UnixNano())
 	_ = godotenv.Load()
+	
+	// Added a really neat comment here.
+	// Let's see if this works!
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 }

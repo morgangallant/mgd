@@ -32,12 +32,11 @@ import (
 func init() {
 	rand.Seed(time.Now().UnixNano())
 	_ = godotenv.Load()
-	
-	// The log package is responsible for logging! We do it a lot!
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 }
 
 func main() {
+	// This is used for shutting down the server when a user presses Ctrl-C.
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		c := make(chan os.Signal, 1)

@@ -80,6 +80,7 @@ func run(ctx context.Context) error {
 	return nil
 }
 
+// This structure describes a connection to the Tailscale internal network.
 type inetConn struct {
 	inner    *tsnet.Server
 	selfId   tailcfg.StableNodeID

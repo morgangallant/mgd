@@ -35,6 +35,8 @@ func init() { // Hopefully this works!
 	
 	// Added a really neat comment here.
 	// Let's see if this works!
+	
+	// Another line here!
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 }

@@ -29,17 +29,11 @@ import (
 	"tailscale.com/tsnet"
 )
 
-func init() { // Hopefully this works!
+func init() {
 	rand.Seed(time.Now().UnixNano())
 	_ = godotenv.Load()
 	
-	// Added a really neat comment here.
-	// Let's see if this works!
-	
-	// Another line here!
-	
-	// This logging flag is super important, otherwise our logs look bad.
-	// This causes problems.
+	// The log package is responsible for logging! We do it a lot!
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 }
 

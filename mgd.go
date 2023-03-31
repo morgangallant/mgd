@@ -29,7 +29,7 @@ import (
 	"tailscale.com/tsnet"
 )
 
-func init() { // This is a cool comment.
+func init() { // This is a cool comment. Here's another one!
 	rand.Seed(time.Now().UnixNano())
 	_ = godotenv.Load()
 
